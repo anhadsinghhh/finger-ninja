@@ -5,7 +5,7 @@ Run it ONCE from TouchDesigner's Textport (Dialogs > Textport and DATs):
     exec(open(r'C:/Users/ANHAD/finger-ninja/touchdesigner/build_network.py').read())
 
 (Change the path if you cloned the repo somewhere else.) It creates
-/project1/finger_ninja, opens the game window, and you can then save the
+/project1/finger_ninja, shows the game on the network background, then save the
 project with Ctrl+S as touchdesigner/finger_ninja.toe.
 
 Network:
@@ -235,12 +235,33 @@ readme = fn.create(textDAT, 'README')
 readme.text = globals().get('__doc__') or 'Finger Ninja - see touchdesigner/README.md'
 place(readme, 0, 2)
 
-try:
-    window.par.winopen.pulse()
-except Exception as exc:
-    _warnings.append('could not open window automatically: {}'.format(exc))
+# Show the game as the background of the network editor ("infinite canvas").
+# A TOP with its Display flag on is drawn behind the nodes of the network
+# it lives in, so we put one in /project1 (what you see on opening TD) and
+# also turn on the flag of 'out' for when you're inside finger_ninja.
+old_view = home.op('finger_ninja_view')
+if old_view is not None:
+    old_view.destroy()
+view = home.create(selectTOP, 'finger_ninja_view')
+setpar(view, 'top', fn.name + '/out')
+view.nodeX, view.nodeY = fn.nodeX + 200, fn.nodeY
+hidden = []
+for node in home.children:  # only one background image: hide the others
+    if node is not view and node.isTOP and node.display:
+        node.display = False
+        hidden.append(node.name)
+view.display = True
+out.display = True
+if hidden:
+    print('Finger Ninja: turned off the Display flag of', ', '.join(hidden))
+
+# a rebuilt network needs a fresh game (and camera format check)
+if 'td_engine' in sys.modules:
+    sys.modules['td_engine'].reset()
 
 print('Finger Ninja: built', fn.path)
+print('The game is shown on the /project1 network background.')
+print("For a separate window, go into finger_ninja, select the 'window' node and press its 'Open' button.")
 if _warnings:
     print('Some parameters could not be set (copy these lines to Claude):')
     for w in _warnings:

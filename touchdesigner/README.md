@@ -33,8 +33,17 @@ keys (Keyboard In CHOP) ─► key_actions (CHOP Execute DAT)   P = pause, Q = c
    ```python
    exec(open(r'C:/Users/ANHAD/finger-ninja/touchdesigner/build_network.py').read())
    ```
-   (Change the path if the repo is somewhere else.) The script creates `/project1/finger_ninja` and opens the game window.
+   (Change the path if the repo is somewhere else.) The script creates `/project1/finger_ninja` and shows the game on the network editor's background.
 4. **Save** with Ctrl+S as `touchdesigner/finger_ninja.toe`. From then on, just open that file.
+
+## Where the game is shown
+
+- **Network background ("infinite canvas")**: the build script adds `finger_ninja_view` (a Select TOP) to `/project1` and turns on its **Display flag**. TouchDesigner draws a TOP with the Display flag on behind the nodes of its network. Any other TOPs in `/project1` that had the flag on are switched off, and the Textport lists them.
+- **Separate window**: go into `finger_ninja`, select the `window` node and press **Open** in its parameters. Press Q to close it again.
+
+## Resolution
+
+On the first frame, `td_engine.pick_camera_format()` reads the webcam's formats from the camera node's **Signal Format** menu and picks the one closest to 1280×720 at 25 fps or more. The Textport shows the choice, e.g. `camera format -> 1280x720 30.000 fps MJPG`. If the camera only gives a smaller image, it's scaled up to 720 lines *before* the game is drawn, so the fruit and text stay sharp. You can also choose a format by hand in the `camera` node.
 
 ## Troubleshooting
 

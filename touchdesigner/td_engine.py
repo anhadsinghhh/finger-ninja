@@ -60,6 +60,7 @@ _state = {
     "prev_time": None,
     "fps": 0.0,
     "fingertip": None,
+    "camera_checked": False,
 }
 
 
@@ -75,6 +76,60 @@ def _create(width, height):
     game.draw_blade = False  # the feedback loop in TouchDesigner draws the trail
     _state["game"] = game
     _state["size"] = (width, height)
+
+
+MIN_HEIGHT = 720  # draw the game at least this tall so text and fruit stay sharp
+
+
+def pick_camera_format(camera, target_width=1280, min_fps=25):
+    """Choose the webcam's best signal format close to 1280x720.
+
+    The Video Device In TOP lists the camera's modes in its 'signalformat'
+    menu, e.g. "1280x720 30.000 fps MJPG". TouchDesigner's default is often a
+    small one. We parse width and fps from each label and prefer: fast enough
+    (>= min_fps), then width closest to target_width, then higher fps.
+    """
+    import re
+
+    try:
+        par = camera.par.signalformat
+        options = list(zip(par.menuNames, par.menuLabels))
+    except Exception as exc:
+        print('Finger Ninja: camera has no signal format menu ({})'.format(exc))
+        return
+    best, best_score = None, None
+    for name, label in options:
+        size = re.search(r'(\d{3,4})\s*[xX]\s*(\d{3,4})', label)
+        if not size:
+            continue
+        width = int(size.group(1))
+        rate = (re.search(r'(\d+(?:\.\d+)?)\s*(?:fps|hz)', label, re.I)
+                or re.search(r'[p@]\s*(\d+(?:\.\d+)?)', label[size.end():]))
+        fps = float(rate.group(1)) if rate else 30.0
+        score = (fps >= min_fps, -abs(width - target_width), fps)
+        if best_score is None or score > best_score:
+            best, best_score = (name, label), score
+    if best is None:
+        print('Finger Ninja: could not read camera formats:', [label for _, label in options])
+        return
+    if par.eval() != best[0]:
+        par.val = best[0]
+    print('Finger Ninja: camera format ->', best[1])
+
+
+def _find_camera(script_op):
+    """Walk up the inputs (game <- mirror <- camera) to the Video Device In TOP."""
+    node = script_op
+    for _ in range(5):
+        if not node.inputs:
+            return None
+        node = node.inputs[0]
+        try:
+            if node.par.signalformat is not None:
+                return node
+        except Exception:
+            pass
+    return None
 
 
 def top_to_bgr(top):
@@ -108,8 +163,20 @@ def cook_game(script_op):
     """Called by the 'game' Script TOP every frame."""
     if not script_op.inputs:
         return
+    if not _state["camera_checked"]:
+        _state["camera_checked"] = True
+        camera = _find_camera(script_op)
+        if camera is not None:
+            pick_camera_format(camera)
+
     frame = top_to_bgr(script_op.inputs[0])
     h, w = frame.shape[:2]
+    if h < MIN_HEIGHT:
+        # small camera image: scale it up first, so everything we draw on top
+        # (fruit, text, hearts) is drawn at full resolution and looks sharp
+        scale = MIN_HEIGHT / h
+        frame = cv2.resize(frame, (round(w * scale), MIN_HEIGHT), interpolation=cv2.INTER_LINEAR)
+        h, w = frame.shape[:2]
 
     if _state["error"]:
         _show_error(script_op, frame, _state["error"])
@@ -173,3 +240,4 @@ def reset():
     _state["game"] = None
     _state["error"] = None
     _state["prev_time"] = None
+    _state["camera_checked"] = False
