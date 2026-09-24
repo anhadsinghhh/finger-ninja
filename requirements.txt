@@ -1,0 +1,5 @@
+mediapipe>=0.10.14
+# the OpenCV build MediaPipe depends on (includes everything in opencv-python)
+opencv-contrib-python>=4.9
+numpy>=1.26
+pygame>=2.5

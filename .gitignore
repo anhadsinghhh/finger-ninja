@@ -1,0 +1,14 @@
+# virtual environment
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# downloaded on first run
+hand_landmarker.task
+*.download
+
+# local high score
+highscore.json
