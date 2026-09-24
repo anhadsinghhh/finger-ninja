@@ -37,20 +37,30 @@ def segment_hits_circle(a, b, center, radius):
 class BladeTrail:
     """Remembers the last few fingertip positions, measures speed, draws the trail."""
 
-    def __init__(self, length=10, color=(255, 230, 160), max_thickness=16):
+    def __init__(self, length=10, color=(255, 230, 160), max_thickness=16, max_gap=0.3):
         self.points = deque(maxlen=length)  # (x, y, time) tuples, oldest first
         self.color = color  # BGR, a light blue glow
         self.max_thickness = max_thickness
         self.speed = 0.0  # pixels per second
+        # During a fast swipe the webcam image blurs and MediaPipe can lose the
+        # hand for a few frames. Gaps shorter than this (seconds) are bridged.
+        self.max_gap = max_gap
+        self.moved = False  # did the blade get a new point this frame?
 
     def add_point(self, point, now):
         """Record the fingertip for this frame (None if no hand was found)."""
         if point is None:
-            # Hand lost: forget the trail so the blade doesn't "teleport"
-            # and slice everything between the old and new position.
-            self.points.clear()
+            # Hand lost this frame. Keep the trail for a short while: if the
+            # hand comes back quickly, the segment from the last known point
+            # to the new one covers the blurry frames in between. Only after a
+            # longer gap do we forget it, so the blade can't "teleport" across
+            # the screen and slice everything in between.
+            self.moved = False
             self.speed = 0.0
+            if self.points and now - self.points[-1][2] > self.max_gap:
+                self.points.clear()
             return
+        self.moved = True
         self.points.append((point[0], point[1], now))
         if len(self.points) >= 2:
             # Speed = distance moved / time taken, between the last two frames
@@ -63,8 +73,8 @@ class BladeTrail:
         return self.points[-1][:2] if self.points else None
 
     def last_segment(self):
-        """The path the fingertip took since the previous frame, or None."""
-        if len(self.points) < 2:
+        """The path the fingertip took since the previous detection, or None."""
+        if not self.moved or len(self.points) < 2:
             return None
         return self.points[-2][:2], self.points[-1][:2]
 
