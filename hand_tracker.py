@@ -45,7 +45,7 @@ def ensure_model(path=MODEL_PATH, url=MODEL_URL):
 class HandTracker:
     """Finds the index fingertip in each frame and smooths its position."""
 
-    def __init__(self, smoothing=0.6):
+    def __init__(self, smoothing=0.5, max_width=640):
         options = vision.HandLandmarkerOptions(
             base_options=mp_tasks.BaseOptions(model_asset_path=str(ensure_model())),
             # VIDEO mode uses the previous frame to track the hand, which is
@@ -61,13 +61,20 @@ class HandTracker:
         self.landmarker = vision.HandLandmarker.create_from_options(options)
         # Smoothing when the finger is still: 0 = none, closer to 1 = smoother but laggier
         self.smoothing = smoothing
+        # MediaPipe shrinks every image to a small fixed size internally, so
+        # giving it a 640-wide copy is just as accurate but cheaper to prepare.
+        self.max_width = max_width
         self.smoothed = None
         self.last_timestamp_ms = -1
 
     def find_index_tip(self, frame_bgr):
         """Return the smoothed (x, y) pixel position of the index fingertip, or None."""
         h, w = frame_bgr.shape[:2]
-        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)  # MediaPipe expects RGB
+        small = frame_bgr
+        if w > self.max_width:
+            small = cv2.resize(frame_bgr, (self.max_width, round(h * self.max_width / w)),
+                               interpolation=cv2.INTER_AREA)
+        rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)  # MediaPipe expects RGB
         image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
         # VIDEO mode needs strictly increasing timestamps in milliseconds
@@ -80,19 +87,19 @@ class HandTracker:
             return None
 
         tip = result.hand_landmarks[0][INDEX_FINGER_TIP]
-        raw = (tip.x * w, tip.y * h)
+        raw = (tip.x * w, tip.y * h)  # normalised 0..1, so this works for the small copy too
 
         # Adaptive exponential moving average: each new position only pulls the
         # smoothed position part of the way, which filters out small jitter.
         #   smoothed = a * smoothed + (1 - a) * raw
         # Smoothing adds lag, which ruins fast swipes, so `a` shrinks as the
         # finger moves faster: full smoothing when (almost) still, none when
-        # it moves 5% of the screen width or more in one frame.
+        # it moves 3% of the screen width or more in one frame.
         if self.smoothed is None:
             self.smoothed = raw
         else:
             dist = math.hypot(raw[0] - self.smoothed[0], raw[1] - self.smoothed[1])
-            fast = min(dist / (0.05 * w), 1.0)  # 0 = still ... 1 = fast
+            fast = min(dist / (0.03 * w), 1.0)  # 0 = still ... 1 = fast
             a = self.smoothing * (1 - fast)
             self.smoothed = (
                 a * self.smoothed[0] + (1 - a) * raw[0],

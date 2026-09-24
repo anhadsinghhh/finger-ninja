@@ -34,6 +34,22 @@ def segment_hits_circle(a, b, center, radius):
     return (px - cx) ** 2 + (py - cy) ** 2 <= radius * radius
 
 
+def segment_hits_moving_circle(a, b, center_before, center_now, radius):
+    """Like segment_hits_circle, but the fruit moved during the frame too.
+
+    Between two frames the blade goes A -> B while the fruit goes from
+    C_before to C_now. At 20-30 FPS a falling fruit can move 40+ pixels per
+    frame, so testing only where it is now can miss cuts that looked right.
+
+    Trick: look at the blade *from the fruit's point of view*. Relative to
+    the fruit, the blade starts at A - C_before and ends at B - C_now, while
+    the fruit sits still at (0, 0). Then it's the same segment-vs-circle test.
+    """
+    rel_a = (a[0] - center_before[0], a[1] - center_before[1])
+    rel_b = (b[0] - center_now[0], b[1] - center_now[1])
+    return segment_hits_circle(rel_a, rel_b, (0.0, 0.0), radius)
+
+
 class BladeTrail:
     """Remembers the last few fingertip positions, measures speed, draws the trail."""
 

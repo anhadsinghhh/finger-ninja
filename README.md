@@ -93,7 +93,11 @@ Between two frames the fingertip moves from point **A** to point **B**. A fast s
 3. Closest point: `P = A + t·(B − A)`
 4. **Hit** if `|C − P| ≤ r`
 
-A slice only counts if the blade speed is at least **1 screen-width per second**, so hovering doesn't cut anything.
+**The fruit moves too.** At 20–30 FPS a falling fruit can move 40+ pixels between frames, so the test is done from the fruit's point of view. Relative to the fruit, the blade goes from `A − C_before` to `B − C_now`, while the fruit stays still at (0, 0). Then it's the same segment-vs-circle test (`segment_hits_moving_circle()` in `blade.py`).
+
+**Forgiving hitboxes.** Fruit hitboxes are 15% bigger than the drawn circle, so edge cuts count. Bomb hitboxes are 10% smaller, so near-misses don't cost a life.
+
+A slice only counts if the blade speed is at least **0.8 screen-widths per second**, so hovering doesn't cut anything.
 
 ### 4. Physics (`entities.py`, `game.py`)
 Every object has a position and a velocity. Each frame (`dt` = seconds since the last frame):

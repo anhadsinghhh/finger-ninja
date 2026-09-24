@@ -33,13 +33,12 @@ keys (Keyboard In CHOP) ─► key_actions (CHOP Execute DAT)   P = pause, Q = c
    ```python
    exec(open(r'C:/Users/ANHAD/finger-ninja/touchdesigner/build_network.py').read())
    ```
-   (Change the path if the repo is somewhere else.) The script creates `/project1/finger_ninja` and shows the game on the network editor's background.
+   (Change the path if the repo is somewhere else.) The script creates `/project1/finger_ninja` and puts the game into the network as the `finger_ninja_view` node.
 4. **Save** with Ctrl+S as `touchdesigner/finger_ninja.toe`. From then on, just open that file.
 
 ## Where the game is shown
 
 - **As a node in `/project1`**: the build script adds `finger_ninja_view`, a Select TOP showing `finger_ninja/out`, with a live image in its tile. In the starter project it takes `moviefilein1`'s place. Whatever `moviefilein1` was connected to now gets the game image instead, and `moviefilein1` is moved aside, not deleted. Plug `finger_ninja_view` into any other TOP to use the game image in your own network.
-- **Network background ("infinite canvas")**: `finger_ninja_view` also has its **Display flag** on, so TouchDesigner draws it behind the nodes. Any other TOPs in `/project1` that had the flag on are switched off, and the Textport lists them.
 - **Separate window**: go into `finger_ninja`, select the `window` node and press **Open** in its parameters. Press Q to close it again.
 
 ## Resolution

@@ -5,7 +5,7 @@ Run it ONCE from TouchDesigner's Textport (Dialogs > Textport and DATs):
     exec(open(r'C:/Users/ANHAD/finger-ninja/touchdesigner/build_network.py').read())
 
 (Change the path if you cloned the repo somewhere else.) It creates
-/project1/finger_ninja, shows the game on the network background, then save the
+/project1/finger_ninja, puts the game into the network as a node, then save the
 project with Ctrl+S as touchdesigner/finger_ninja.toe.
 
 Network:
@@ -279,17 +279,10 @@ for target, index in targets:
     except Exception as exc:
         _warnings.append('could not connect game to {}: {}'.format(target.name, exc))
 
-# Also show it as the background of the network editor ("infinite canvas"):
-# a TOP with its Display flag on is drawn behind the nodes of its network.
-hidden = []
-for node in home.children:  # only one background image: hide the others
-    if node is not view and node.isTOP and node.display:
-        node.display = False
-        hidden.append(node.name)
-view.display = True
-out.display = True
-if hidden:
-    print('Finger Ninja: turned off the Display flag of', ', '.join(hidden))
+# Only in the node tile, not as the network background: the Display flag
+# (which draws a TOP behind the nodes) stays off.
+view.display = False
+out.display = False
 
 # Python keeps imported modules in memory, so after the .py files change a
 # rebuild must reload td_engine (and the game code) to pick up the new code.
@@ -299,7 +292,7 @@ for name in ('entities', 'blade', 'game', 'hand_tracker', 'sounds', 'td_engine')
         importlib.reload(sys.modules[name])
 
 print('Finger Ninja: built', fn.path)
-print("The game is the 'finger_ninja_view' node in", home.path, '(and the network background).')
+print("The game is the 'finger_ninja_view' node in", home.path)
 print("For a separate window, go into finger_ninja, select the 'window' node and press its 'Open' button.")
 if _warnings:
     print('Some parameters could not be set (copy these lines to Claude):')

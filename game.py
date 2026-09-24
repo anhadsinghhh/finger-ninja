@@ -7,7 +7,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from blade import BladeTrail, segment_hits_circle
+from blade import BladeTrail, segment_hits_moving_circle
 from entities import Bomb, FloatingText, Fruit, FruitHalf, Particle
 
 MENU, PLAYING, PAUSED, GAME_OVER = "menu", "playing", "paused", "game_over"
@@ -18,7 +18,12 @@ WHITE, YELLOW, RED, GREY = (255, 255, 255), (0, 220, 255), (40, 40, 230), (90, 9
 START_LIVES = 3
 # The fingertip must move at least this many screen-widths per second to cut.
 # Hovering or slow movement is well below this, a quick swipe is well above.
-MIN_SLICE_SPEED = 1.0
+MIN_SLICE_SPEED = 0.8
+# Hitbox size compared to the drawn circle. Fruit gets a slightly bigger
+# hitbox so cuts along the edge count; bombs a slightly smaller one so
+# near-misses don't cost a life. (Most games are forgiving like this.)
+FRUIT_HIT_SCALE = 1.15
+BOMB_HIT_SCALE = 0.9
 # Slices less than this many seconds apart count as the same swipe (combo).
 COMBO_WINDOW = 0.35
 RETRY_DELAY = 1.0  # seconds before the "play again" fruit can be sliced
@@ -193,10 +198,11 @@ class Game:
 
     def update_button(self, cut):
         fruit = self.button_fruit
+        fruit.prev_x, fruit.prev_y = fruit.x, fruit.y
         fruit.y = fruit.home_y + math.sin(self.clock * 2.5) * 12 * self.s  # gentle bobbing
         if self.state == GAME_OVER and self.clock - self.game_over_time < RETRY_DELAY:
             return
-        if cut and segment_hits_circle(*cut, (fruit.x, fruit.y), fruit.radius):
+        if cut and self.blade_hits(cut, fruit, FRUIT_HIT_SCALE):
             fruit.gravity = self.base_gravity  # so its halves fall
             self.split_fruit(fruit)
             self.start_game()
@@ -214,11 +220,11 @@ class Game:
         # Slice detection: does this frame's blade segment cross any object?
         if cut:
             for fruit in list(self.fruits):
-                if segment_hits_circle(*cut, (fruit.x, fruit.y), fruit.radius):
+                if self.blade_hits(cut, fruit, FRUIT_HIT_SCALE):
                     self.fruits.remove(fruit)
                     self.slice_fruit(fruit)
             for bomb in list(self.bombs):
-                if segment_hits_circle(*cut, (bomb.x, bomb.y), bomb.radius):
+                if self.blade_hits(cut, bomb, BOMB_HIT_SCALE):
                     self.bombs.remove(bomb)
                     self.hit_bomb(bomb)
                     if self.state != PLAYING:
@@ -237,6 +243,12 @@ class Game:
         # A combo ends once no fruit has been sliced for COMBO_WINDOW seconds
         if self.combo_count and self.clock - self.last_slice_time > COMBO_WINDOW:
             self.finish_combo()
+
+    @staticmethod
+    def blade_hits(cut, obj, hit_scale):
+        """Did this frame's blade movement pass through the (moving) object?"""
+        a, b = cut
+        return segment_hits_moving_circle(a, b, (obj.prev_x, obj.prev_y), (obj.x, obj.y), obj.radius * hit_scale)
 
     # ------------------------------------------------------------ game events
     def split_fruit(self, fruit):

@@ -121,9 +121,10 @@ def _find_camera(script_op):
     """Walk up the inputs (game <- mirror <- camera) to the Video Device In TOP."""
     node = script_op
     for _ in range(5):
-        if not node.inputs:
+        inputs = getattr(node, "inputs", None)
+        if not inputs:
             return None
-        node = node.inputs[0]
+        node = inputs[0]
         try:
             if node.par.signalformat is not None:
                 return node
@@ -136,18 +137,28 @@ def top_to_bgr(top):
     """TouchDesigner TOP -> OpenCV image.
 
     numpyArray() gives float RGBA values 0..1 with the BOTTOM row first,
-    OpenCV wants uint8 BGR with the TOP row first.
+    OpenCV wants uint8 BGR with the TOP row first. OpenCV's own functions do
+    the conversion about 3x faster than numpy maths.
+
+    delayed=True returns the image downloaded from the graphics card on the
+    previous call instead of making the GPU stop and wait for this frame's
+    image, which is the slowest part of reading a TOP from Python.
     """
-    rgba = top.numpyArray()
-    rgb = (rgba[::-1, :, :3] * 255).astype(np.uint8)
-    return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    rgba = None
+    try:
+        rgba = top.numpyArray(delayed=True)
+    except TypeError:  # older TouchDesigner without the 'delayed' option
+        pass
+    if rgba is None:  # the first delayed call has nothing yet
+        rgba = top.numpyArray()
+    bgr = cv2.cvtColor(cv2.convertScaleAbs(rgba, alpha=255), cv2.COLOR_RGBA2BGR)
+    return cv2.flip(bgr, 0)
 
 
 def output_rgba(script_op, image, is_bgr=True):
     """OpenCV image -> Script TOP output (RGBA, bottom row first)."""
     code = cv2.COLOR_BGR2RGBA if is_bgr else cv2.COLOR_RGB2RGBA
-    rgba = cv2.cvtColor(image, code) if image.shape[2] == 3 else image
-    script_op.copyNumpyArray(np.ascontiguousarray(rgba[::-1]))
+    script_op.copyNumpyArray(cv2.flip(cv2.cvtColor(image, code), 0))
 
 
 def _show_error(script_op, frame, message):
@@ -204,29 +215,35 @@ def cook_game(script_op):
         _show_error(script_op, frame, _state["error"])
 
 
+TRAIL_SCALE = 0.5  # the trail gets blurred into a glow anyway, so half resolution is plenty
+
+
 def cook_trail(script_op):
     """Called by the 'trail_source' Script TOP every frame.
 
     Draws only the NEWEST piece of the blade (last position -> current
     position) on a black image. The feedback loop keeps older pieces
     around, dimming them a bit every frame, which makes the fading trail.
+    It's drawn at half resolution (faster); the final composite scales it up.
     """
     size = _state["size"]
     if size is None and script_op.inputs:
         size = (script_op.inputs[0].width, script_op.inputs[0].height)
     w, h = size or (1280, 720)
-    canvas = np.zeros((h, w, 3), dtype=np.uint8)
+    k = TRAIL_SCALE
+    canvas = np.zeros((round(h * k), round(w * k), 3), dtype=np.uint8)
 
     game = _state["game"]
     if game is not None:
         segment = game.blade.last_segment()
-        thickness = max(4, int(14 * h / 720))
+        thickness = max(2, int(14 * k * h / 720))
         if segment is not None:
             (x0, y0), (x1, y1) = segment
-            cv2.line(canvas, (int(x0), int(y0)), (int(x1), int(y1)), BLADE_COLOR_RGB, thickness, cv2.LINE_AA)
+            cv2.line(canvas, (int(x0 * k), int(y0 * k)), (int(x1 * k), int(y1 * k)),
+                     BLADE_COLOR_RGB, thickness, cv2.LINE_AA)
         if game.blade.tip is not None and _state["fingertip"] is not None:
-            tip = tuple(int(v) for v in game.blade.tip)
-            cv2.circle(canvas, tip, thickness // 2 + 2, (255, 255, 255), -1, cv2.LINE_AA)
+            tip = tuple(int(v * k) for v in game.blade.tip)
+            cv2.circle(canvas, tip, thickness // 2 + 1, (255, 255, 255), -1, cv2.LINE_AA)
     output_rgba(script_op, canvas, is_bgr=False)
 
 
