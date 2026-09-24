@@ -70,6 +70,7 @@ class Game:
         self.base_gravity = 1.3 * height  # pixels / second^2
 
         self.blade = BladeTrail(max_thickness=max(6, int(16 * self.s)))
+        self.draw_blade = True  # the TouchDesigner version draws its own trail
         self.fruits, self.bombs = [], []
         self.halves, self.particles, self.texts = [], [], []
         self.state = MENU
@@ -318,7 +319,8 @@ class Game:
         for t in self.texts:
             draw_text(frame, t.text, (t.x, t.y), t.scale, t.color, 2, True)
 
-        self.blade.draw(frame)
+        if self.draw_blade:
+            self.blade.draw(frame)
         self.draw_hud(frame, fps, hand_visible)
 
         if self.flash > 0:  # red flash after hitting a bomb

@@ -61,6 +61,10 @@ The first time you run it, the game downloads the hand model (`hand_landmarker.t
 
 On macOS, allow camera access for your terminal when you're asked.
 
+## TouchDesigner version
+
+The game also runs inside TouchDesigner, with a node-based camera pipeline and a feedback-loop blade trail. See [touchdesigner/README.md](touchdesigner/README.md) for setup.
+
 ## How it works
 
 ```

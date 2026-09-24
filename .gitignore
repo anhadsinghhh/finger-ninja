@@ -12,3 +12,11 @@ hand_landmarker.task
 
 # local high score
 highscore.json
+
+# local scratch / build files
+.scratch/
+
+# TouchDesigner: installed packages and autosave backups
+touchdesigner/td_packages/
+touchdesigner/Backup/
+*.toe.bak
