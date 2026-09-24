@@ -54,9 +54,15 @@ import threading  # noqa: E402
 
 BLADE_COLOR_RGB = (160, 230, 255)  # light blue, same as the Python version
 TRACK_WIDTH = 640  # MediaPipe gets a copy this wide (it shrinks images internally anyway)
-# True: hand tracking runs on a background thread, so drawing never waits for
-# MediaPipe. (Tests switch it off to get the same result every run.)
-THREADED = True
+# Low-latency settings (the defaults): track the hand and draw in the same
+# frame, using this frame's camera image, so the blade stays right on your finger.
+#
+# THREADED = True runs MediaPipe on a background thread, and
+# DELAYED_READBACK = True reads the camera image one frame late so the
+# graphics card never has to wait. Both raise FPS on a slow PC, but each adds
+# about a frame of delay between your finger and the blade.
+THREADED = False
+DELAYED_READBACK = False
 
 
 class TrackerThread:
@@ -209,16 +215,17 @@ def top_to_bgr(top):
     OpenCV wants uint8 BGR with the TOP row first. OpenCV's own functions do
     the conversion about 3x faster than numpy maths.
 
-    delayed=True returns the image downloaded from the graphics card on the
-    previous call instead of making the GPU stop and wait for this frame's
-    image, which is the slowest part of reading a TOP from Python.
+    With DELAYED_READBACK, numpyArray(delayed=True) returns the image
+    downloaded on the previous call instead of making the GPU wait for this
+    frame's image: faster, but one frame behind.
     """
     rgba = None
-    try:
-        rgba = top.numpyArray(delayed=True)
-    except TypeError:  # older TouchDesigner without the 'delayed' option
-        pass
-    if rgba is None:  # the first delayed call has nothing yet
+    if DELAYED_READBACK:
+        try:
+            rgba = top.numpyArray(delayed=True)
+        except TypeError:  # older TouchDesigner without the 'delayed' option
+            pass
+    if rgba is None:  # not delayed, or the first delayed call has nothing yet
         rgba = top.numpyArray()
     bgr = cv2.cvtColor(cv2.convertScaleAbs(rgba, alpha=255), cv2.COLOR_RGBA2BGR)
     return cv2.flip(bgr, 0)

@@ -17,10 +17,10 @@ camera ─► mirror ─► game (Script TOP) ───────────�
                       └──► trail_glow (Blur) ───────────────────────┘
 
 keys (Keyboard In CHOP) ─► key_actions (CHOP Execute DAT)   P = pause, Q = close window
-tick (Execute DAT): cooks 'game' on every TouchDesigner frame
+tick (Execute DAT, off by default): cooks 'game' on every TouchDesigner frame
 ```
 
-**The blade trail is a feedback loop.** Every frame, `trail_source` draws only the newest piece of the blade (from the previous fingertip position to the current one). `trail_feedback` hands `trail` its own previous image, `trail_fade` dims it to 85%, and the new piece is added on top. Older pieces get dimmer every frame until they disappear. A blurred copy is added on top to make the glow.
+**The blade trail is a feedback loop.** Every frame, `trail_source` draws only the newest piece of the blade (from the previous fingertip position to the current one). `trail_feedback` hands `trail` its own previous image, `trail_fade` dims it to 72%, and the new piece is added on top. Older pieces get dimmer every frame until they disappear. A blurred copy is added on top to make the glow.
 
 ## Setup (Windows)
 
@@ -44,13 +44,17 @@ tick (Execute DAT): cooks 'game' on every TouchDesigner frame
 
 ## Speed
 
-- **Drawing and tracking are separate.** MediaPipe runs on a background thread (`TrackerThread` in `td_engine.py`). The game hands it the newest camera image and keeps drawing, so it never waits for MediaPipe. MediaPipe's C code runs while Python keeps going, so both happen at the same time.
-- **The game draws every TouchDesigner frame.** The `tick` Execute DAT cooks `game` at TouchDesigner's frame rate (60/s by default), not just when the camera sends a new image. Fruit, particles and the trail move smoothly, and hand tracking keeps up at the camera's rate.
-- **Two numbers, bottom-left:** `FPS` is how often the game draws, and `Hand tracking: N/s` is how many fingertip positions arrive per second. The camera limits tracking, usually to 30/s.
-- **Slicing still uses finger samples.** Each new fingertip position is checked against where each fruit was at the *previous* fingertip position, so extra drawn frames don't affect cutting.
-- **Text is cached.** Text is drawn once into a small image and then just pasted. With OpenCV 4.8 (bundled with TouchDesigner), drawing it fresh every frame cost about 25 ms per frame.
+By default the game uses **low-latency mode**: every camera image is tracked and drawn in the same cook, so the blade stays right on your finger. The camera sets the pace, usually 30 frames/s.
 
-In a test setup matching TouchDesigner's Python (3.11, numpy 1.24, OpenCV 4.8), these changes took the game from about 20 to about 66 frames per second.
+- **Text is cached.** Text is drawn once into a small image and then just pasted. With OpenCV 4.8 (bundled with TouchDesigner), drawing it fresh every frame cost about 25 ms per frame. This was the biggest speed-up: in a test setup matching TouchDesigner's Python (3.11, numpy 1.24, OpenCV 4.8), the game went from about 20 to about 50 frames/s, faster than the camera.
+- **Bottom-left numbers:** `FPS` is how often the game draws, and `Hand tracking: N/s` is how many fingertip positions arrive per second.
+
+Optional **high-FPS mode**, for fast PCs only. Each option adds about one frame of delay between your finger and the blade:
+- `td_engine.THREADED = True`: MediaPipe runs on a background thread, so drawing never waits for it.
+- `td_engine.DELAYED_READBACK = True`: reads the camera image one frame late, so the graphics card never has to wait.
+- Turn on the `tick` Execute DAT's **Active** parameter: the game cooks on every TouchDesigner frame (60/s) instead of once per camera image. If your PC can't keep up, TouchDesigner will stutter.
+
+To turn the Python options on, edit them near the top of `td_engine.py`, then rebuild the network.
 
 ## Resolution
 
