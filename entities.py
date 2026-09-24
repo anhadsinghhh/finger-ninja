@@ -43,7 +43,8 @@ class PhysicsObject:
 
     def __init__(self, x, y, vx, vy, radius, gravity):
         self.x, self.y = x, y
-        self.prev_x, self.prev_y = x, y  # position one frame ago (for slice detection)
+        # position at the previous fingertip sample (set by Game, for slice detection)
+        self.prev_x, self.prev_y = x, y
         self.vx, self.vy = vx, vy
         self.radius = radius
         self.gravity = gravity
@@ -51,7 +52,6 @@ class PhysicsObject:
         self.spin = random.uniform(-180, 180)  # degrees per second
 
     def update(self, dt):
-        self.prev_x, self.prev_y = self.x, self.y
         # Semi-implicit Euler integration (see the module docstring)
         self.vy += self.gravity * dt
         self.x += self.vx * dt

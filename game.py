@@ -43,16 +43,53 @@ def save_high_score(path, score):
         print(f"Could not save high score: {exc}")
 
 
+# Drawing text is slow (each piece is drawn 9 times for the outline), but most
+# text stays the same from frame to frame. So each piece of text is drawn ONCE
+# into a small image ("sprite") plus a transparency mask, cached, and after
+# that just pasted onto the frame.
+_text_cache = {}
+
+
+def _text_sprite(text, scale, color, thickness):
+    key = (text, round(scale, 3), color, thickness)
+    sprite = _text_cache.get(key)
+    if sprite is None:
+        (tw, th), base = cv2.getTextSize(text, FONT, scale, thickness)
+        o = thickness + 1  # outline = black copies shifted around the real text
+        pad = o + 2
+        h, w = th + base + 2 * pad, tw + 2 * pad
+        image = np.zeros((h, w, 3), np.uint8)
+        mask = np.zeros((h, w), np.uint8)
+        origin = (pad, pad + th)  # where the text baseline starts inside the sprite
+        for dx, dy in ((-o, 0), (o, 0), (0, -o), (0, o), (-o, -o), (o, o), (-o, o), (o, -o)):
+            cv2.putText(mask, text, (origin[0] + dx, origin[1] + dy), FONT, scale, 255, thickness, cv2.LINE_AA)
+        cv2.putText(image, text, origin, FONT, scale, color, thickness, cv2.LINE_AA)
+        cv2.putText(mask, text, origin, FONT, scale, 255, thickness, cv2.LINE_AA)
+        alpha = (mask.astype(np.float32) / 255)[:, :, None]
+        if len(_text_cache) > 300:  # e.g. many different FPS numbers: start over
+            _text_cache.clear()
+        sprite = _text_cache[key] = (image, alpha, origin, (tw, th))
+    return sprite
+
+
 def draw_text(frame, text, pos, scale, color=WHITE, thickness=2, center=False):
     """Text with a black outline so it's readable on any background."""
+    image, alpha, (ox, oy), (tw, th) = _text_sprite(text, scale, color, thickness)
     x, y = int(pos[0]), int(pos[1])
     if center:
-        (tw, th), _ = cv2.getTextSize(text, FONT, scale, thickness)
         x, y = x - tw // 2, y + th // 2
-    o = thickness + 1  # outline = black copies shifted around the real text
-    for dx, dy in ((-o, 0), (o, 0), (0, -o), (0, o), (-o, -o), (o, o), (-o, o), (o, -o)):
-        cv2.putText(frame, text, (x + dx, y + dy), FONT, scale, (0, 0, 0), thickness, cv2.LINE_AA)
-    cv2.putText(frame, text, (x, y), FONT, scale, color, thickness, cv2.LINE_AA)
+    # paste the sprite so its baseline origin lands on (x, y), clipped to the frame
+    left, top = x - ox, y - oy
+    fh, fw = frame.shape[:2]
+    sh, sw = image.shape[:2]
+    x0, y0 = max(left, 0), max(top, 0)
+    x1, y1 = min(left + sw, fw), min(top + sh, fh)
+    if x1 <= x0 or y1 <= y0:
+        return
+    src = image[y0 - top:y1 - top, x0 - left:x1 - left]
+    a = alpha[y0 - top:y1 - top, x0 - left:x1 - left]
+    roi = frame[y0:y1, x0:x1]
+    roi[:] = (roi * (1 - a) + src * a).astype(np.uint8)
 
 
 def draw_heart(frame, cx, cy, size, color):
@@ -170,9 +207,18 @@ class Game:
                 self.fruits.append(self.throw(Fruit, d["speed"]))
 
     # ---------------------------------------------------------------- update
-    def update(self, dt, fingertip, now):
-        """Advance the game by dt seconds. `now` is the real time, for blade speed."""
-        self.blade.add_point(fingertip, now)
+    def update(self, dt, fingertip, now, new_sample=True):
+        """Advance the game by dt seconds.
+
+        fingertip: position from the hand tracker (None = no hand found)
+        now: when that position was captured, for the blade speed
+        new_sample: False when the game draws faster than the hand tracker and
+                    there is no new fingertip position this frame
+        """
+        if new_sample:
+            self.blade.add_point(fingertip, now)
+        else:
+            self.blade.moved = False  # nothing new: no blade segment to cut with
         if self.state == PAUSED:
             return
         dt = min(dt, 0.05)  # avoid huge jumps if a frame was slow
@@ -181,13 +227,19 @@ class Game:
 
         # Speed check: only a fast-moving fingertip counts as a cut.
         cut = None
-        if self.blade.speed >= MIN_SLICE_SPEED * self.w:
+        if new_sample and self.blade.speed >= MIN_SLICE_SPEED * self.w:
             cut = self.blade.last_segment()
 
         if self.state in (MENU, GAME_OVER):
             self.update_button(cut)
         elif self.state == PLAYING:
             self.update_playing(dt, cut)
+
+        if new_sample:
+            # Remember where everything was at this fingertip sample: the next
+            # blade segment is checked against movement since this moment.
+            for obj in self.fruits + self.bombs + [self.button_fruit]:
+                obj.prev_x, obj.prev_y = obj.x, obj.y
 
         # effects keep moving on every screen
         for obj in self.halves + self.particles + self.texts:
@@ -198,7 +250,6 @@ class Game:
 
     def update_button(self, cut):
         fruit = self.button_fruit
-        fruit.prev_x, fruit.prev_y = fruit.x, fruit.y
         fruit.y = fruit.home_y + math.sin(self.clock * 2.5) * 12 * self.s  # gentle bobbing
         if self.state == GAME_OVER and self.clock - self.game_over_time < RETRY_DELAY:
             return

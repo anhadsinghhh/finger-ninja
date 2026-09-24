@@ -21,6 +21,7 @@ Network:
                               +-> trail_glow (Blur) ---------------+
 
   keys (Keyboard In CHOP) -> key_actions (CHOP Execute DAT): P pause, Q close window
+  tick (Execute DAT): cooks 'game' every TouchDesigner frame
 """
 import os
 import sys
@@ -185,7 +186,7 @@ wire(trail_source, trail_feedback)
 place(trail_feedback, 3, 3)
 
 trail_fade = fn.create(levelTOP, 'trail_fade')
-setpar(trail_fade, 'brightness1', 0.72)  # each frame the old trail keeps 72% of its brightness
+setpar(trail_fade, 'brightness1', 0.85)  # each frame (60/s) the old trail keeps 85% of its brightness
 wire(trail_feedback, trail_fade)
 place(trail_fade, 4, 3)
 
@@ -223,6 +224,17 @@ setpar(key_actions, 'chop', keys.name)
 setpar(key_actions, 'offtoon', True)
 setpar(key_actions, 'valuechange', False)
 place(key_actions, 1, 5)
+
+# tick: cook the game on EVERY TouchDesigner frame (60/s by default), not
+# only when the camera delivers a new image (30/s). Fruit, particles and the
+# trail move more smoothly; hand tracking keeps running at the camera's rate.
+tick = fn.create(executeDAT, 'tick')
+tick.text = '''def onFrameStart(frame):
+    op('game').cook(force=True)
+    return
+'''
+setpar(tick, 'framestart', True)
+place(tick, 2, 5)
 
 # output window
 window = fn.create(windowCOMP, 'window')

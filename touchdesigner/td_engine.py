@@ -50,17 +50,85 @@ def _stub_matplotlib():
 
 _stub_matplotlib()
 
+import threading  # noqa: E402
+
 BLADE_COLOR_RGB = (160, 230, 255)  # light blue, same as the Python version
+TRACK_WIDTH = 640  # MediaPipe gets a copy this wide (it shrinks images internally anyway)
+# True: hand tracking runs on a background thread, so drawing never waits for
+# MediaPipe. (Tests switch it off to get the same result every run.)
+THREADED = True
+
+
+class TrackerThread:
+    """Runs MediaPipe hand tracking on a background thread.
+
+    The game hands over the newest camera image with submit() and keeps
+    drawing. The thread works on the newest image it has been given (older
+    ones are simply replaced) and publishes the result. MediaPipe's C code
+    lets Python run meanwhile, so tracking and drawing happen at the same time.
+    """
+
+    def __init__(self, tracker):
+        self.tracker = tracker
+        self.error = None
+        self._cond = threading.Condition()
+        self._job = None
+        self._running = True
+        # (fingertip or None, capture time, sample number); replaced as a whole
+        self.result = (None, 0.0, 0)
+        self._thread = threading.Thread(target=self._run, name="FingerNinjaTracker", daemon=True)
+        self._thread.start()
+
+    def submit(self, small_frame, scale, capture_time):
+        with self._cond:
+            self._job = (small_frame, scale, capture_time)  # only the newest image matters
+            self._cond.notify()
+
+    def _run(self):
+        sample = 0
+        while True:
+            with self._cond:
+                while self._job is None and self._running:
+                    self._cond.wait()
+                if not self._running:
+                    return
+                frame, (sx, sy), capture_time = self._job
+                self._job = None
+            try:
+                tip = self.tracker.find_index_tip(frame)
+            except Exception:
+                self.error = traceback.format_exc()
+                return
+            if tip is not None:
+                tip = (tip[0] * sx, tip[1] * sy)  # back to full-size pixels
+            sample += 1
+            self.result = (tip, capture_time, sample)
+
+    def stop(self):
+        with self._cond:
+            self._running = False
+            self._cond.notify()
+
+
+# When this module is reloaded (rebuilding the network), the old _state is
+# still here for a moment: stop its tracker thread before replacing it.
+_old_state = globals().get("_state")
+if _old_state and _old_state.get("tracker") is not None and hasattr(_old_state["tracker"], "stop"):
+    _old_state["tracker"].stop()
 
 _state = {
     "game": None,
-    "tracker": None,
+    "tracker": None,  # TrackerThread (or a plain HandTracker when THREADED is False)
     "error": None,
     "size": None,
     "prev_time": None,
     "fps": 0.0,
     "fingertip": None,
     "camera_checked": False,
+    "last_sample": 0,
+    "track_rate": 0.0,  # hand-tracking results per second
+    "rate_start": None,
+    "rate_samples": 0,
 }
 
 
@@ -71,7 +139,8 @@ def _create(width, height):
     from sounds import SoundManager
 
     if _state["tracker"] is None:
-        _state["tracker"] = HandTracker()
+        tracker = HandTracker(max_width=TRACK_WIDTH)
+        _state["tracker"] = TrackerThread(tracker) if THREADED else tracker
     game = Game(width, height, SoundManager(), ROOT / "highscore.json")
     game.draw_blade = False  # the feedback loop in TouchDesigner draws the trail
     _state["game"] = game
@@ -170,6 +239,50 @@ def _show_error(script_op, frame, message):
     output_rgba(script_op, frame)
 
 
+def _track(frame, now):
+    """Hand the frame to the hand tracker; return (fingertip, capture time, new?).
+
+    With the background thread, the result usually belongs to an image from a
+    moment ago, and on some frames there's no new result at all (the game
+    draws faster than MediaPipe tracks). `new` tells the game which is which.
+    """
+    h, w = frame.shape[:2]
+    small_h = round(h * TRACK_WIDTH / w)
+    small = cv2.resize(frame, (TRACK_WIDTH, small_h), interpolation=cv2.INTER_AREA)
+    scale = (w / TRACK_WIDTH, h / small_h)
+    tracker = _state["tracker"]
+
+    if not isinstance(tracker, TrackerThread):  # simple mode: wait for the result
+        tip = tracker.find_index_tip(small)
+        if tip is not None:
+            tip = (tip[0] * scale[0], tip[1] * scale[1])
+        return tip, now, True
+
+    if tracker.error:
+        raise RuntimeError("hand tracking thread failed:\n" + tracker.error)
+    tracker.submit(small, scale, now)  # small is a new array, safe to hand over
+    tip, capture_time, sample = tracker.result
+    new_sample = sample != _state["last_sample"]
+    _state["last_sample"] = sample
+    return tip, capture_time, new_sample
+
+
+def _draw_track_rate(frame, new_sample, now):
+    """Show how many hand-tracking results arrive per second (next to FPS)."""
+    from game import draw_text
+
+    if _state["rate_start"] is None:
+        _state["rate_start"] = now
+    _state["rate_samples"] += int(new_sample)
+    elapsed = now - _state["rate_start"]
+    if elapsed >= 1.0:
+        _state["track_rate"] = _state["rate_samples"] / elapsed
+        _state["rate_start"], _state["rate_samples"] = now, 0
+    s = frame.shape[0] / 720
+    draw_text(frame, "Hand tracking: {:.0f}/s".format(_state["track_rate"]),
+              (150 * s, frame.shape[0] - 20 * s), 0.6 * s, (255, 255, 255), 1)
+
+
 def cook_game(script_op):
     """Called by the 'game' Script TOP every frame."""
     if not script_op.inputs:
@@ -203,11 +316,12 @@ def cook_game(script_op):
         if dt > 0:
             _state["fps"] = 0.9 * _state["fps"] + 0.1 / dt
 
-        fingertip = _state["tracker"].find_index_tip(frame)
+        fingertip, capture_time, new_sample = _track(frame, now)
         _state["fingertip"] = fingertip
         game = _state["game"]
-        game.update(dt, fingertip, now)
+        game.update(dt, fingertip, capture_time, new_sample)
         game.draw(frame, _state["fps"], fingertip is not None)
+        _draw_track_rate(frame, new_sample, now)
         output_rgba(script_op, frame)
     except Exception:
         _state["error"] = "Finger Ninja error:\n" + traceback.format_exc()
