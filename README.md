@@ -74,11 +74,14 @@ webcam frame ──► hand tracking ──► blade ──► collision detecti
 ### 1. Hand tracking (`hand_tracker.py`)
 Each frame is mirrored, converted to RGB and passed to MediaPipe's Hand Landmarker in `VIDEO` mode. It returns 21 landmarks per hand. Landmark **8** is the index fingertip.
 The coordinates come back normalised (0–1), so we multiply them by the frame size to get pixels.
-Raw positions jitter a little, so we apply an **exponential moving average**:
+Raw positions jitter a little, so we apply an **adaptive exponential moving average**:
 
 ```
-smoothed = 0.5 * smoothed + 0.5 * new_position
+smoothed = a * smoothed + (1 - a) * new_position
 ```
+
+When the finger is almost still, `a = 0.5`, which removes jitter. `a` shrinks to 0 as the finger speeds up, reaching 0 at 3% of the screen width per frame, so fast swipes don't lag behind.
+MediaPipe runs on a 640-pixel-wide copy of the frame. It shrinks images internally anyway, so this is just as accurate and faster.
 
 ### 2. The blade (`blade.py`)
 `BladeTrail` keeps the last 10 fingertip positions with timestamps.
