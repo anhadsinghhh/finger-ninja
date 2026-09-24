@@ -255,9 +255,12 @@ out.display = True
 if hidden:
     print('Finger Ninja: turned off the Display flag of', ', '.join(hidden))
 
-# a rebuilt network needs a fresh game (and camera format check)
-if 'td_engine' in sys.modules:
-    sys.modules['td_engine'].reset()
+# Python keeps imported modules in memory, so after the .py files change a
+# rebuild must reload td_engine (and the game code) to pick up the new code.
+import importlib
+for name in ('entities', 'blade', 'game', 'hand_tracker', 'sounds', 'td_engine'):
+    if name in sys.modules:
+        importlib.reload(sys.modules[name])
 
 print('Finger Ninja: built', fn.path)
 print('The game is shown on the /project1 network background.')
