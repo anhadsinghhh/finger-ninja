@@ -21,7 +21,6 @@ Network:
                               +-> trail_glow (Blur) ---------------+
 
   keys (Keyboard In CHOP) -> key_actions (CHOP Execute DAT): P pause, Q close window
-  tick (Execute DAT, off by default): cooks 'game' every TouchDesigner frame
 """
 import os
 import sys
@@ -225,19 +224,15 @@ setpar(key_actions, 'offtoon', True)
 setpar(key_actions, 'valuechange', False)
 place(key_actions, 1, 5)
 
-# tick (OFF by default): cooks the game on EVERY TouchDesigner frame (60/s)
-# instead of once per camera image (30/s). Smoother motion, but only on a
-# fast PC: each cook takes ~15 ms, which can leave TouchDesigner no time for
-# the rest of the network and make everything stutter. To try it, turn on
-# the node's Active parameter (and set td_engine.THREADED = True).
-tick = fn.create(executeDAT, 'tick')
-tick.text = '''def onFrameStart(frame):
-    op('game').cook(force=True)
-    return
-'''
-setpar(tick, 'framestart', True)
-setpar(tick, 'active', False)
-place(tick, 2, 5)
+# run the whole project at 30 frames per second, the webcam's rate
+try:
+    project.cookRate = 30
+    print('Finger Ninja: project frame rate set to 30 FPS')
+except Exception as exc:
+    _warnings.append('could not set the project frame rate to 30: {}'.format(exc))
+old_tick = fn.op('tick')
+if old_tick is not None:
+    old_tick.destroy()
 
 # output window
 window = fn.create(windowCOMP, 'window')

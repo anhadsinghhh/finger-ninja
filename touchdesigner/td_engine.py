@@ -50,91 +50,23 @@ def _stub_matplotlib():
 
 _stub_matplotlib()
 
-import threading  # noqa: E402
-
 BLADE_COLOR_RGB = (160, 230, 255)  # light blue, same as the Python version
 TRACK_WIDTH = 640  # MediaPipe gets a copy this wide (it shrinks images internally anyway)
-# Low-latency settings (the defaults): track the hand and draw in the same
-# frame, using this frame's camera image, so the blade stays right on your finger.
-#
-# THREADED = True runs MediaPipe on a background thread, and
-# DELAYED_READBACK = True reads the camera image one frame late so the
-# graphics card never has to wait. Both raise FPS on a slow PC, but each adds
-# about a frame of delay between your finger and the blade.
-THREADED = False
-DELAYED_READBACK = False
+BLACK_TIMEOUT = 2.0  # seconds of black camera image before we react
 
-
-class TrackerThread:
-    """Runs MediaPipe hand tracking on a background thread.
-
-    The game hands over the newest camera image with submit() and keeps
-    drawing. The thread works on the newest image it has been given (older
-    ones are simply replaced) and publishes the result. MediaPipe's C code
-    lets Python run meanwhile, so tracking and drawing happen at the same time.
-    """
-
-    def __init__(self, tracker):
-        self.tracker = tracker
-        self.error = None
-        self._cond = threading.Condition()
-        self._job = None
-        self._running = True
-        # (fingertip or None, capture time, sample number); replaced as a whole
-        self.result = (None, 0.0, 0)
-        self._thread = threading.Thread(target=self._run, name="FingerNinjaTracker", daemon=True)
-        self._thread.start()
-
-    def submit(self, small_frame, scale, capture_time):
-        with self._cond:
-            self._job = (small_frame, scale, capture_time)  # only the newest image matters
-            self._cond.notify()
-
-    def _run(self):
-        sample = 0
-        while True:
-            with self._cond:
-                while self._job is None and self._running:
-                    self._cond.wait()
-                if not self._running:
-                    return
-                frame, (sx, sy), capture_time = self._job
-                self._job = None
-            try:
-                tip = self.tracker.find_index_tip(frame)
-            except Exception:
-                self.error = traceback.format_exc()
-                return
-            if tip is not None:
-                tip = (tip[0] * sx, tip[1] * sy)  # back to full-size pixels
-            sample += 1
-            self.result = (tip, capture_time, sample)
-
-    def stop(self):
-        with self._cond:
-            self._running = False
-            self._cond.notify()
-
-
-# When this module is reloaded (rebuilding the network), the old _state is
-# still here for a moment: stop its tracker thread before replacing it.
-_old_state = globals().get("_state")
-if _old_state and _old_state.get("tracker") is not None and hasattr(_old_state["tracker"], "stop"):
-    _old_state["tracker"].stop()
 
 _state = {
     "game": None,
-    "tracker": None,  # TrackerThread (or a plain HandTracker when THREADED is False)
+    "tracker": None,
     "error": None,
     "size": None,
     "prev_time": None,
     "fps": 0.0,
     "fingertip": None,
     "camera_checked": False,
-    "last_sample": 0,
-    "track_rate": 0.0,  # hand-tracking results per second
-    "rate_start": None,
-    "rate_samples": 0,
+    "camera": None,  # the Video Device In TOP
+    "original_format": None,  # its signal format before we changed it
+    "black_since": None,  # when the camera image went black
 }
 
 
@@ -145,8 +77,7 @@ def _create(width, height):
     from sounds import SoundManager
 
     if _state["tracker"] is None:
-        tracker = HandTracker(max_width=TRACK_WIDTH)
-        _state["tracker"] = TrackerThread(tracker) if THREADED else tracker
+        _state["tracker"] = HandTracker(max_width=TRACK_WIDTH)
     game = Game(width, height, SoundManager(), ROOT / "highscore.json")
     game.draw_blade = False  # the feedback loop in TouchDesigner draws the trail
     _state["game"] = game
@@ -188,6 +119,7 @@ def pick_camera_format(camera, target_width=1280, min_fps=25):
         print('Finger Ninja: could not read camera formats:', [label for _, label in options])
         return
     if par.eval() != best[0]:
+        _state["original_format"] = par.eval()
         par.val = best[0]
     print('Finger Ninja: camera format ->', best[1])
 
@@ -214,19 +146,8 @@ def top_to_bgr(top):
     numpyArray() gives float RGBA values 0..1 with the BOTTOM row first,
     OpenCV wants uint8 BGR with the TOP row first. OpenCV's own functions do
     the conversion about 3x faster than numpy maths.
-
-    With DELAYED_READBACK, numpyArray(delayed=True) returns the image
-    downloaded on the previous call instead of making the GPU wait for this
-    frame's image: faster, but one frame behind.
     """
-    rgba = None
-    if DELAYED_READBACK:
-        try:
-            rgba = top.numpyArray(delayed=True)
-        except TypeError:  # older TouchDesigner without the 'delayed' option
-            pass
-    if rgba is None:  # not delayed, or the first delayed call has nothing yet
-        rgba = top.numpyArray()
+    rgba = top.numpyArray()
     bgr = cv2.cvtColor(cv2.convertScaleAbs(rgba, alpha=255), cv2.COLOR_RGBA2BGR)
     return cv2.flip(bgr, 0)
 
@@ -246,48 +167,41 @@ def _show_error(script_op, frame, message):
     output_rgba(script_op, frame)
 
 
-def _track(frame, now):
-    """Hand the frame to the hand tracker; return (fingertip, capture time, new?).
-
-    With the background thread, the result usually belongs to an image from a
-    moment ago, and on some frames there's no new result at all (the game
-    draws faster than MediaPipe tracks). `new` tells the game which is which.
-    """
+def _track(frame):
+    """Find the fingertip (full-size pixel coordinates) or None."""
     h, w = frame.shape[:2]
     small_h = round(h * TRACK_WIDTH / w)
     small = cv2.resize(frame, (TRACK_WIDTH, small_h), interpolation=cv2.INTER_AREA)
-    scale = (w / TRACK_WIDTH, h / small_h)
-    tracker = _state["tracker"]
-
-    if not isinstance(tracker, TrackerThread):  # simple mode: wait for the result
-        tip = tracker.find_index_tip(small)
-        if tip is not None:
-            tip = (tip[0] * scale[0], tip[1] * scale[1])
-        return tip, now, True
-
-    if tracker.error:
-        raise RuntimeError("hand tracking thread failed:\n" + tracker.error)
-    tracker.submit(small, scale, now)  # small is a new array, safe to hand over
-    tip, capture_time, sample = tracker.result
-    new_sample = sample != _state["last_sample"]
-    _state["last_sample"] = sample
-    return tip, capture_time, new_sample
+    tip = _state["tracker"].find_index_tip(small)
+    if tip is None:
+        return None
+    return (tip[0] * w / TRACK_WIDTH, tip[1] * h / small_h)
 
 
-def _draw_track_rate(frame, new_sample, now):
-    """Show how many hand-tracking results arrive per second (next to FPS)."""
-    from game import draw_text
+def _camera_is_black(frame, now):
+    """Handle a camera that only delivers black images.
 
-    if _state["rate_start"] is None:
-        _state["rate_start"] = now
-    _state["rate_samples"] += int(new_sample)
-    elapsed = now - _state["rate_start"]
-    if elapsed >= 1.0:
-        _state["track_rate"] = _state["rate_samples"] / elapsed
-        _state["rate_start"], _state["rate_samples"] = now, 0
-    s = frame.shape[0] / 720
-    draw_text(frame, "Hand tracking: {:.0f}/s".format(_state["track_rate"]),
-              (150 * s, frame.shape[0] - 20 * s), 0.6 * s, (255, 255, 255), 1)
+    Returns a message to show, or None if the image is fine. If we switched
+    the camera's format and it has been black for BLACK_TIMEOUT seconds, the
+    new format probably doesn't work with this webcam, so we switch back.
+    """
+    if frame[::16, ::16].max() > 8:  # anything not (almost) black
+        _state["black_since"] = None
+        return None
+    if _state["black_since"] is None:
+        _state["black_since"] = now
+        return None
+    if now - _state["black_since"] < BLACK_TIMEOUT:
+        return None
+    camera, original = _state["camera"], _state["original_format"]
+    if camera is not None and original is not None:
+        print('Finger Ninja: camera stayed black, switching back to its original format:', original)
+        camera.par.signalformat.val = original
+        _state["original_format"] = None
+        _state["black_since"] = None
+        return None
+    return ("No camera image. Is another app (or the Python game) using the webcam?\n"
+            "Otherwise pick a different Device or Signal Format in the 'camera' node.")
 
 
 def cook_game(script_op):
@@ -296,9 +210,9 @@ def cook_game(script_op):
         return
     if not _state["camera_checked"]:
         _state["camera_checked"] = True
-        camera = _find_camera(script_op)
-        if camera is not None:
-            pick_camera_format(camera)
+        _state["camera"] = _find_camera(script_op)
+        if _state["camera"] is not None:
+            pick_camera_format(_state["camera"])
 
     frame = top_to_bgr(script_op.inputs[0])
     h, w = frame.shape[:2]
@@ -312,6 +226,10 @@ def cook_game(script_op):
     if _state["error"]:
         _show_error(script_op, frame, _state["error"])
         return
+    black = _camera_is_black(frame, time.perf_counter())
+    if black:
+        _show_error(script_op, frame, black)
+        return
     try:
         if _state["game"] is None or _state["size"] != (w, h):
             _create(w, h)
@@ -323,12 +241,11 @@ def cook_game(script_op):
         if dt > 0:
             _state["fps"] = 0.9 * _state["fps"] + 0.1 / dt
 
-        fingertip, capture_time, new_sample = _track(frame, now)
+        fingertip = _track(frame)
         _state["fingertip"] = fingertip
         game = _state["game"]
-        game.update(dt, fingertip, capture_time, new_sample)
+        game.update(dt, fingertip, now)
         game.draw(frame, _state["fps"], fingertip is not None)
-        _draw_track_rate(frame, new_sample, now)
         output_rgba(script_op, frame)
     except Exception:
         _state["error"] = "Finger Ninja error:\n" + traceback.format_exc()
@@ -379,3 +296,4 @@ def reset():
     _state["error"] = None
     _state["prev_time"] = None
     _state["camera_checked"] = False
+    _state["black_since"] = None
