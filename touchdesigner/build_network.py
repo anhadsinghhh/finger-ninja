@@ -235,16 +235,52 @@ readme = fn.create(textDAT, 'README')
 readme.text = globals().get('__doc__') or 'Finger Ninja - see touchdesigner/README.md'
 place(readme, 0, 2)
 
-# Show the game as the background of the network editor ("infinite canvas").
-# A TOP with its Display flag on is drawn behind the nodes of the network
-# it lives in, so we put one in /project1 (what you see on opening TD) and
-# also turn on the flag of 'out' for when you're inside finger_ninja.
+# Put the game into the /project1 network as a node: 'finger_ninja_view'
+# (a Select TOP that shows finger_ninja/out). It takes the place of the
+# starter project's 'moviefilein1': same spot, and whatever moviefilein1 fed
+# into now gets the game image instead. moviefilein1 is moved aside, not deleted.
+def _output_targets(node):
+    """(operator, input index) pairs that node's output is wired into."""
+    try:
+        return [(c.owner, c.index) for c in node.outputConnectors[0].connections]
+    except Exception:
+        return []
+
+
 old_view = home.op('finger_ninja_view')
+starter = home.op('moviefilein1')
+old_targets = _output_targets(old_view) if old_view is not None else []
+starter_targets = _output_targets(starter) if starter is not None else []
+if old_view is not None and old_targets:
+    # rebuilding after the swap: keep the old view's spot and wiring
+    spot, targets = (old_view.nodeX, old_view.nodeY), old_targets
+elif starter is not None and (starter_targets or old_view is None):
+    # moviefilein1 still wired in (or first build): take its spot and wiring
+    spot, targets = (starter.nodeX, starter.nodeY), starter_targets
+    starter.nodeX -= 250  # move it aside
+elif old_view is not None:
+    spot, targets = (old_view.nodeX, old_view.nodeY), []
+else:
+    spot, targets = (fn.nodeX + 200, fn.nodeY), []
 if old_view is not None:
     old_view.destroy()
+
 view = home.create(selectTOP, 'finger_ninja_view')
 setpar(view, 'top', fn.name + '/out')
-view.nodeX, view.nodeY = fn.nodeX + 200, fn.nodeY
+view.nodeX, view.nodeY = spot
+try:
+    view.viewer = True  # live image in the node tile
+except Exception:
+    pass
+for target, index in targets:
+    try:
+        target.inputConnectors[index].connect(view)
+        print('Finger Ninja: connected the game to', target.name)
+    except Exception as exc:
+        _warnings.append('could not connect game to {}: {}'.format(target.name, exc))
+
+# Also show it as the background of the network editor ("infinite canvas"):
+# a TOP with its Display flag on is drawn behind the nodes of its network.
 hidden = []
 for node in home.children:  # only one background image: hide the others
     if node is not view and node.isTOP and node.display:
@@ -263,7 +299,7 @@ for name in ('entities', 'blade', 'game', 'hand_tracker', 'sounds', 'td_engine')
         importlib.reload(sys.modules[name])
 
 print('Finger Ninja: built', fn.path)
-print('The game is shown on the /project1 network background.')
+print("The game is the 'finger_ninja_view' node in", home.path, '(and the network background).')
 print("For a separate window, go into finger_ninja, select the 'window' node and press its 'Open' button.")
 if _warnings:
     print('Some parameters could not be set (copy these lines to Claude):')

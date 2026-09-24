@@ -38,7 +38,8 @@ keys (Keyboard In CHOP) ─► key_actions (CHOP Execute DAT)   P = pause, Q = c
 
 ## Where the game is shown
 
-- **Network background ("infinite canvas")**: the build script adds `finger_ninja_view` (a Select TOP) to `/project1` and turns on its **Display flag**. TouchDesigner draws a TOP with the Display flag on behind the nodes of its network. Any other TOPs in `/project1` that had the flag on are switched off, and the Textport lists them.
+- **As a node in `/project1`**: the build script adds `finger_ninja_view`, a Select TOP showing `finger_ninja/out`, with a live image in its tile. In the starter project it takes `moviefilein1`'s place. Whatever `moviefilein1` was connected to now gets the game image instead, and `moviefilein1` is moved aside, not deleted. Plug `finger_ninja_view` into any other TOP to use the game image in your own network.
+- **Network background ("infinite canvas")**: `finger_ninja_view` also has its **Display flag** on, so TouchDesigner draws it behind the nodes. Any other TOPs in `/project1` that had the flag on are switched off, and the Textport lists them.
 - **Separate window**: go into `finger_ninja`, select the `window` node and press **Open** in its parameters. Press Q to close it again.
 
 ## Resolution
