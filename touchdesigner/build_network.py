@@ -22,13 +22,35 @@ Network:
 
   keys (Keyboard In CHOP) -> key_actions (CHOP Execute DAT): P pause, Q close window
 """
+import os
 import sys
 
-try:
-    FN_DIR = __file__.replace('\\', '/').rsplit('/', 1)[0]
-except NameError:  # exec() doesn't set __file__
-    FN_DIR = globals().get('FN_DIR', 'C:/Users/ANHAD/finger-ninja/touchdesigner')
 
+def _find_fn_dir():
+    """Find the touchdesigner/ folder (the one containing td_engine.py).
+
+    exec() in the Textport doesn't reliably set __file__, so we check a few
+    candidates and use the first one that really has td_engine.py in it.
+    """
+    candidates = []
+    if 'FN_DIR' in globals():  # set by hand: FN_DIR = r'...'
+        candidates.append(globals()['FN_DIR'])
+    try:
+        candidates.append(os.path.dirname(os.path.abspath(__file__)))
+    except NameError:
+        pass
+    candidates.append('C:/Users/ANHAD/finger-ninja/touchdesigner')
+    for folder in candidates:
+        if folder and os.path.isfile(os.path.join(folder, 'td_engine.py')):
+            return os.path.abspath(folder).replace('\\', '/')
+    raise RuntimeError(
+        'Could not find td_engine.py. Tell the script where the touchdesigner folder is, e.g.\n'
+        "  FN_DIR = r'D:/code/finger-ninja/touchdesigner'\n"
+        "  exec(open(FN_DIR + '/build_network.py').read())\n"
+        'Checked: {}'.format(candidates))
+
+
+FN_DIR = _find_fn_dir()
 print('Finger Ninja: building from', FN_DIR)
 print('  TouchDesigner Python', sys.version.split()[0])
 try:
